@@ -5,5 +5,7 @@
 1. Clone the repository
 
 ```bash
-git clone https://github.com/yourname/yourrepo.git
-cd yourrepo
+git clone git@github.com:Mahmoudbat/MyFeed.git
+cd MyFeed
+flutter pub get
+flutter run
