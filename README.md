@@ -1,6 +1,6 @@
 # Myfeed
 
-#features
+## features
 
 1. vertical scrolling through media
 2. Reels tab
