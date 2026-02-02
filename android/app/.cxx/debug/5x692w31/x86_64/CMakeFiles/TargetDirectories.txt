@@ -1,0 +1,2 @@
+C:/Users/IMLE/Documents/local_social_media/android/app/.cxx/debug/5x692w31/x86_64/CMakeFiles/edit_cache.dir
+C:/Users/IMLE/Documents/local_social_media/android/app/.cxx/debug/5x692w31/x86_64/CMakeFiles/rebuild_cache.dir

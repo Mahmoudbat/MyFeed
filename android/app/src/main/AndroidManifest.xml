@@ -1,0 +1,69 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!--
+      Correct, modern permissions for Android 13 (API 33) and above.
+      These replace the old READ_EXTERNAL_STORAGE.
+    -->
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES"/>
+    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO"/> <!-- ADDED for video access -->
+
+    <!--
+      This is required to get GPS location data from photos if you need it.
+      It requires separate runtime permission handling.
+    -->
+    <uses-permission android:name="android.permission.ACCESS_MEDIA_LOCATION" />
+
+    <!--
+      Legacy storage permission for compatibility with Android 10 (API 29) through Android 12 (API 32).
+      The "maxSdkVersion" attribute is KEY. It tells the system to ONLY request this
+      permission on older Android versions and ignore it on Android 13+, which
+      prevents the IDE errors.
+    -->
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
+
+    <!--
+      WRITE_EXTERNAL_STORAGE is generally not needed just to read media.
+      Unless you are actively saving files to public directories, you can remove this.
+      If you do need it, also limit it to older SDKs.
+      <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="29" />
+    -->
+
+
+    <application
+        android:label="local_social_media"
+        android:name="${applicationName}"
+        android:icon="@mipmap/ic_launcher"
+        android:requestLegacyExternalStorage="true"
+        android:enableOnBackInvokedCallback="true">
+    <activity
+        android:name=".MainActivity"
+        android:exported="true"
+        android:launchMode="singleTop"
+        android:taskAffinity=""
+        android:theme="@style/LaunchTheme"
+        android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
+        android:hardwareAccelerated="true"
+        android:windowSoftInputMode="adjustResize">
+
+        <meta-data
+            android:name="io.flutter.embedding.android.NormalTheme"
+            android:resource="@style/NormalTheme"
+            />
+        <intent-filter>
+            <action android:name="android.intent.action.MAIN"/>
+            <category android:name="android.intent.category.LAUNCHER"/>
+        </intent-filter>
+    </activity>
+
+    <meta-data
+        android:name="flutterEmbedding"
+        android:value="2" />
+</application>
+
+<queries>
+<intent>
+    <action android:name="android.intent.action.PROCESS_TEXT"/>
+    <data android:mimeType="text/plain"/>
+</intent>
+</queries>
+</manifest>
