@@ -22,7 +22,13 @@ dependencies:
   path: ^1.9.0
   shared_preferences: ^2.2.3 # For saving settings
   file_picker: ^8.0.0        # For choosing export location (v6 used deprecated v1 embedding)
-
+  permission_handler: ^11.3.1 # For requesting permissions
+  
+  # Security packages
+  local_auth: ^2.2.0         # For biometric authentication
+  encrypt: ^5.0.3            # For file encryption
+  crypto: ^3.0.3             # For password hashing
+  
   # UI helpers
   transparent_image: ^2.0.1
   cupertino_icons: ^1.0.8

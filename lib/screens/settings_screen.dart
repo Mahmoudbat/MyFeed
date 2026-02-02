@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:path/path.dart' as path;
 import 'package:path_provider/path_provider.dart';
 import '../services/settings_service.dart';
+import 'auth_screen.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -18,6 +19,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _deleteAfterImport = false;
   bool _deleteAfterExport = false;
   bool _isExporting = false;
+  bool _scrollVertical = true;
 
   @override
   void initState() {
@@ -28,6 +30,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Future<void> _loadSettings() async {
     _deleteAfterImport = await _settingsService.getDeleteAfterImport();
     _deleteAfterExport = await _settingsService.getDeleteAfterExport();
+    _scrollVertical = await _settingsService.getScrollDirectionVertical();
     setState(() {});
   }
 
@@ -104,6 +107,28 @@ class _SettingsScreenState extends State<SettingsScreen> {
             )
           : ListView(
               children: [
+                ListTile(
+                  leading: const Icon(Icons.lock, color: Colors.amber),
+                  title: const Text('Locked Gallery'),
+                  subtitle: const Text('Private encrypted gallery'),
+                  trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+                  onTap: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(builder: (_) => const AuthScreen()),
+                    );
+                  },
+                ),
+                const Divider(),
+                SwitchListTile(
+                  title: const Text('Vertical media scrolling'),
+                  subtitle: Text(_scrollVertical ? 'Scroll vertically between media (like Instagram)' : 'Swipe horizontally between media'),
+                  value: _scrollVertical,
+                  onChanged: (value) {
+                    setState(() => _scrollVertical = value);
+                    _settingsService.setScrollDirectionVertical(value);
+                  },
+                ),
+                const Divider(),
                 SwitchListTile(
                   title: const Text('Delete after importing'),
                   subtitle: const Text('Automatically delete from public gallery after import'),

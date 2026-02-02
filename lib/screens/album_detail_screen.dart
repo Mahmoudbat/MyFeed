@@ -1,18 +1,14 @@
-
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
-import 'package:local_social_media/models/album.dart';
-import 'package:local_social_media/screens/full_screen_viewer.dart';
-import 'package:local_social_media/services/thumbnail_service.dart';
-import 'package:path/path.dart' as path;
-import 'package:path_provider/path_provider.dart';
-import 'package:wechat_assets_picker/wechat_assets_picker.dart';
-
-import '../services/album_service.dart';
-import '../widgets/media_grid_item.dart';
+import 'package:flutter/services.dart';
+import 'package:photo_manager/photo_manager.dart';
+import 'package:video_player/video_player.dart';
+import '../services/encryption_service.dart';
+import '../services/settings_service.dart';
 
 class AlbumDetailScreen extends StatefulWidget {
-  final Album album;
+  final AssetPathEntity album;
 
   const AlbumDetailScreen({super.key, required this.album});
 
@@ -21,199 +17,98 @@ class AlbumDetailScreen extends StatefulWidget {
 }
 
 class _AlbumDetailScreenState extends State<AlbumDetailScreen> {
-  final AlbumService _albumService = AlbumService();
-  final ThumbnailService _thumbnailService = ThumbnailService();
-  late List<File> _files;
+  final EncryptionService _encryptionService = EncryptionService();
+  final SettingsService _settingsService = SettingsService();
+  List<AssetEntity> _assets = [];
+  bool _isLoading = true;
   bool _selectionMode = false;
-  final Set<String> _selectedPaths = {};
+  final Set<String> _selectedIds = {};
 
   @override
   void initState() {
     super.initState();
-    _files = List.from(widget.album.files);
-    _files.sort((a, b) => b.lastModifiedSync().compareTo(a.lastModifiedSync()));
+    _loadAlbumAssets();
+  }
+
+  Future<void> _loadAlbumAssets() async {
+    setState(() => _isLoading = true);
+    
+    final count = await widget.album.assetCountAsync;
+    final assets = await widget.album.getAssetListPaged(page: 0, size: count);
+    
+    // Sort by date (newest first)
+    assets.sort((a, b) => b.createDateTime.compareTo(a.createDateTime));
+    
+    setState(() {
+      _assets = assets;
+      _isLoading = false;
+    });
   }
 
   void _exitSelectionMode() {
     setState(() {
       _selectionMode = false;
-      _selectedPaths.clear();
+      _selectedIds.clear();
     });
   }
 
-  void _enterSelectionMode(String filePath) {
+  void _enterSelectionMode(String id) {
     setState(() {
       _selectionMode = true;
-      _selectedPaths.add(filePath);
+      _selectedIds.add(id);
     });
   }
 
-  void _toggleSelect(String filePath) {
+  void _toggleSelect(String id) {
     setState(() {
-      if (_selectedPaths.contains(filePath)) {
-        _selectedPaths.remove(filePath);
+      if (_selectedIds.contains(id)) {
+        _selectedIds.remove(id);
+        if (_selectedIds.isEmpty) {
+          _selectionMode = false;
+        }
       } else {
-        _selectedPaths.add(filePath);
+        _selectedIds.add(id);
       }
     });
   }
 
   void _selectAll() {
     setState(() {
-      for (final f in _files) {
-        _selectedPaths.add(f.path);
+      for (final asset in _assets) {
+        _selectedIds.add(asset.id);
       }
     });
   }
 
-  List<File> get _selectedFiles =>
-      _files.where((f) => _selectedPaths.contains(f.path)).toList();
-
-  Future<void> _deleteSelected() async {
-    final files = _selectedFiles;
-    if (files.isEmpty) return;
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Delete selected?'),
-        content: Text(
-            'Permanently delete ${files.length} item${files.length == 1 ? '' : 's'} from device? This cannot be undone.'),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Delete', style: TextStyle(color: Colors.red)),
-          ),
-        ],
-      ),
-    );
-    if (confirm != true || !mounted) return;
-    for (final file in files) {
-      if (await file.exists()) await file.delete();
-      final thumb = await _thumbnailService.getThumbnailFile(file);
-      if (await thumb.exists()) await thumb.delete();
-      await _albumService.removeFileFromAllAlbums(file);
+  Future<void> _addToLockedGallery() async {
+    final selectedAssets = _assets.where((a) => _selectedIds.contains(a.id)).toList();
+    if (selectedAssets.isEmpty) return;
+    
+    setState(() => _isLoading = true);
+    
+    int successCount = 0;
+    for (final asset in selectedAssets) {
+      try {
+        final file = await asset.file;
+        if (file != null) {
+          await _encryptionService.encryptFile(file);
+          successCount++;
+        }
+      } catch (e) {
+        print('Error encrypting file: $e');
+      }
     }
-    setState(() {
-      _files.removeWhere((f) => _selectedPaths.contains(f.path));
-      _selectionMode = false;
-      _selectedPaths.clear();
-    });
+    
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Deleted ${files.length} item(s).')));
-    }
-  }
-
-  Future<void> _moveToAlbum() async {
-    final files = _selectedFiles;
-    if (files.isEmpty) return;
-    final albums = await _albumService.loadAlbums();
-    final customAlbums = albums.where((a) => a.isDeletable && a.name != widget.album.name).toList();
-    if (customAlbums.isEmpty) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('No other custom album. Create one in Albums tab.')),
-        );
-      }
-      return;
-    }
-    if (!mounted) return;
-    final chosen = await showDialog<Album>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Move to album'),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: customAlbums
-                .map((a) => ListTile(
-                      title: Text(a.name),
-                      subtitle: Text('${a.files.length} items'),
-                      onTap: () => Navigator.pop(ctx, a),
-                    ))
-                .toList(),
-          ),
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Added $successCount item(s) to locked gallery'),
+          backgroundColor: Colors.green,
         ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
-        ],
-      ),
-    );
-    if (chosen == null || !mounted) return;
-    await _albumService.addFilesToAlbum(chosen.name, files);
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Added ${files.length} item(s) to ${chosen.name}'), backgroundColor: Colors.green),
       );
-      setState(() {
-        _selectionMode = false;
-        _selectedPaths.clear();
-      });
+      _exitSelectionMode();
+      setState(() => _isLoading = false);
     }
-  }
-
-  Future<void> _removeFromAlbum() async {
-    if (!widget.album.isDeletable) return;
-    final files = _selectedFiles;
-    if (files.isEmpty) return;
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Remove from album?'),
-        content: Text(
-            'Remove ${files.length} item${files.length == 1 ? '' : 's'} from "${widget.album.name}"? Files stay in your vault.'),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
-          TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Remove')),
-        ],
-      ),
-    );
-    if (confirm != true || !mounted) return;
-    await _albumService.removeFilesFromAlbum(widget.album.name, files);
-    setState(() {
-      _files.removeWhere((f) => _selectedPaths.contains(f.path));
-      _selectionMode = false;
-      _selectedPaths.clear();
-    });
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Removed ${files.length} item(s) from album.')),
-      );
-    }
-  }
-
-  Future<void> _pickAndAddMedia() async {
-    final List<AssetEntity>? assets = await AssetPicker.pickAssets(
-      context,
-      pickerConfig: const AssetPickerConfig(
-        maxAssets: 100,
-        requestType: RequestType.common,
-      ),
-    );
-
-    if (assets == null) return;
-
-    final Directory appDir = await getApplicationDocumentsDirectory();
-    final List<File> newFiles = [];
-
-    for (final AssetEntity asset in assets) {
-      final File? file = await asset.file;
-      if (file != null) {
-        final String fileName = path.basename(file.path);
-        final String savePath = path.join(appDir.path, fileName);
-        final newFile = await file.copy(savePath);
-        newFiles.add(newFile);
-      }
-    }
-
-    if (widget.album.isDeletable) {
-      await _albumService.addFilesToAlbum(widget.album.name, newFiles);
-    }
-
-    setState(() {
-      _files.addAll(newFiles);
-      _files.sort((a, b) => b.lastModifiedSync().compareTo(a.lastModifiedSync()));
-    });
   }
 
   @override
@@ -226,22 +121,17 @@ class _AlbumDetailScreenState extends State<AlbumDetailScreen> {
                 icon: const Icon(Icons.close),
                 onPressed: _exitSelectionMode,
               ),
-              title: Text('${_selectedPaths.length} selected'),
+              title: Text('${_selectedIds.length} selected'),
               actions: [
-                IconButton(icon: const Icon(Icons.select_all), onPressed: _selectAll, tooltip: 'Select all'),
-                PopupMenuButton<String>(
-                  icon: const Icon(Icons.more_vert),
-                  onSelected: (value) {
-                    if (value == 'delete') _deleteSelected();
-                    if (value == 'move') _moveToAlbum();
-                    if (value == 'remove') _removeFromAlbum();
-                  },
-                  itemBuilder: (ctx) => [
-                    const PopupMenuItem(value: 'move', child: Row(children: [Icon(Icons.drive_file_move), SizedBox(width: 8), Text('Move to album')])),
-                    if (widget.album.isDeletable)
-                      const PopupMenuItem(value: 'remove', child: Row(children: [Icon(Icons.remove_circle_outline), SizedBox(width: 8), Text('Remove from album')])),
-                    const PopupMenuItem(value: 'delete', child: Row(children: [Icon(Icons.delete, color: Colors.red), SizedBox(width: 8), Text('Delete', style: TextStyle(color: Colors.red))])),
-                  ],
+                IconButton(
+                  icon: const Icon(Icons.select_all),
+                  onPressed: _selectAll,
+                  tooltip: 'Select all',
+                ),
+                IconButton(
+                  icon: const Icon(Icons.lock),
+                  onPressed: _addToLockedGallery,
+                  tooltip: 'Add to locked gallery',
                 ),
               ],
             )
@@ -249,64 +139,424 @@ class _AlbumDetailScreenState extends State<AlbumDetailScreen> {
               title: Text(widget.album.name),
               centerTitle: true,
               backgroundColor: Colors.black,
-              actions: [
-                if (widget.album.isDeletable)
-                  IconButton(
-                    icon: const Icon(Icons.add_photo_alternate_outlined),
-                    onPressed: _pickAndAddMedia,
-                  ),
-              ],
             ),
       backgroundColor: Colors.black,
-      body: _files.isEmpty
-          ? Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  const Text(
-                    'This album is empty.',
-                    style: TextStyle(color: Colors.white70),
+      body: _isLoading
+          ? const Center(child: CircularProgressIndicator())
+          : _assets.isEmpty
+              ? Center(
+                  child: Text(
+                    'This album is empty',
+                    style: TextStyle(color: Colors.white.withOpacity(0.7)),
                   ),
-                  const SizedBox(height: 16),
-                  if (widget.album.isDeletable)
-                    ElevatedButton.icon(
-                      icon: const Icon(Icons.add_photo_alternate),
-                      label: const Text('Add Media'),
-                      onPressed: _pickAndAddMedia,
-                    )
-                ],
-              ),
-            )
-          : GridView.builder(
-              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 3,
-                crossAxisSpacing: 2,
-                mainAxisSpacing: 2,
-              ),
-              itemCount: _files.length,
-              itemBuilder: (context, index) {
-                final file = _files[index];
-                final pathStr = file.path;
-                return MediaGridItem(
-                  file: file,
-                  index: index,
-                  isSelectionMode: _selectionMode,
-                  isSelected: _selectedPaths.contains(pathStr),
-                  onLongPress: () => _enterSelectionMode(pathStr),
-                  onToggleSelect: () => _toggleSelect(pathStr),
-                  onTap: () {
-                    Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (_) => FullScreenViewer(
-                          files: _files,
-                          initialIndex: index,
-                        ),
+                )
+              : GridView.builder(
+                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: 3,
+                    crossAxisSpacing: 2,
+                    mainAxisSpacing: 2,
+                  ),
+                  itemCount: _assets.length,
+                  itemBuilder: (context, index) {
+                    final asset = _assets[index];
+                    final isSelected = _selectedIds.contains(asset.id);
+                    
+                    return GestureDetector(
+                      onTap: () {
+                        if (_selectionMode) {
+                          _toggleSelect(asset.id);
+                        } else {
+                          _openFullScreen(index);
+                        }
+                      },
+                      onLongPress: () => _enterSelectionMode(asset.id),
+                      child: Stack(
+                        fit: StackFit.expand,
+                        children: [
+                          FutureBuilder<Uint8List?>(
+                            future: asset.thumbnailDataWithSize(const ThumbnailSize(200, 200)),
+                            builder: (context, snapshot) {
+                              if (snapshot.hasData && snapshot.data != null) {
+                                return Image.memory(
+                                  snapshot.data!,
+                                  fit: BoxFit.cover,
+                                );
+                              }
+                              return Container(
+                                color: Colors.grey[900],
+                                child: const Center(
+                                  child: CircularProgressIndicator(),
+                                ),
+                              );
+                            },
+                          ),
+                          if (asset.type == AssetType.video)
+                            Positioned(
+                              bottom: 4,
+                              right: 4,
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                                decoration: BoxDecoration(
+                                  color: Colors.black.withOpacity(0.7),
+                                  borderRadius: BorderRadius.circular(4),
+                                ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    const Icon(Icons.play_arrow, size: 14, color: Colors.white),
+                                    const SizedBox(width: 2),
+                                    Text(
+                                      _formatDuration(asset.duration),
+                                      style: const TextStyle(color: Colors.white, fontSize: 10),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          if (_selectionMode)
+                            Positioned(
+                              top: 4,
+                              right: 4,
+                              child: Container(
+                                width: 24,
+                                height: 24,
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  color: isSelected ? Colors.blue : Colors.white.withOpacity(0.3),
+                                  border: Border.all(color: Colors.white, width: 2),
+                                ),
+                                child: isSelected
+                                    ? const Icon(Icons.check, size: 16, color: Colors.white)
+                                    : null,
+                              ),
+                            ),
+                        ],
                       ),
                     );
                   },
-                );
-              },
-            ),
+                ),
     );
+  }
+
+  void _openFullScreen(int index) async {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => _AlbumAssetViewer(
+          assets: _assets,
+          initialIndex: index,
+          settingsService: _settingsService,
+        ),
+      ),
+    );
+  }
+
+  String _formatDuration(int seconds) {
+    final duration = Duration(seconds: seconds);
+    final minutes = duration.inMinutes;
+    final secs = duration.inSeconds % 60;
+    return '${minutes}:${secs.toString().padLeft(2, '0')}';
+  }
+}
+
+class _AlbumAssetViewer extends StatefulWidget {
+  final List<AssetEntity> assets;
+  final int initialIndex;
+  final SettingsService settingsService;
+
+  const _AlbumAssetViewer({
+    required this.assets,
+    required this.initialIndex,
+    required this.settingsService,
+  });
+
+  @override
+  State<_AlbumAssetViewer> createState() => _AlbumAssetViewerState();
+}
+
+class _AlbumAssetViewerState extends State<_AlbumAssetViewer> {
+  late PageController _pageController;
+  late int _currentIndex;
+  bool _verticalScrolling = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _currentIndex = widget.initialIndex;
+    _pageController = PageController(initialPage: widget.initialIndex);
+    _loadScrollPreference();
+  }
+
+  Future<void> _loadScrollPreference() async {
+    final vertical = await widget.settingsService.getScrollDirectionVertical();
+    if (mounted) {
+      setState(() => _verticalScrolling = vertical);
+    }
+  }
+
+  @override
+  void dispose() {
+    _pageController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      appBar: AppBar(
+        backgroundColor: Colors.transparent,
+        title: Text('${_currentIndex + 1} / ${widget.assets.length}'),
+      ),
+      body: PageView.builder(
+        controller: _pageController,
+        scrollDirection: _verticalScrolling ? Axis.vertical : Axis.horizontal,
+        itemCount: widget.assets.length,
+        onPageChanged: (index) => setState(() => _currentIndex = index),
+        itemBuilder: (context, index) {
+          final asset = widget.assets[index];
+          return _AlbumAssetViewItem(asset: asset);
+        },
+      ),
+    );
+  }
+}
+
+// Cached asset view item to reduce glitches
+class _AlbumAssetViewItem extends StatefulWidget {
+  final AssetEntity asset;
+
+  const _AlbumAssetViewItem({required this.asset});
+
+  @override
+  State<_AlbumAssetViewItem> createState() => _AlbumAssetViewItemState();
+}
+
+class _AlbumAssetViewItemState extends State<_AlbumAssetViewItem> with AutomaticKeepAliveClientMixin {
+  File? _file;
+  bool _isLoading = true;
+
+  @override
+  bool get wantKeepAlive => true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadFile();
+  }
+
+  Future<void> _loadFile() async {
+    final file = await widget.asset.file;
+    if (mounted) {
+      setState(() {
+        _file = file;
+        _isLoading = false;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    super.build(context);
+    
+    if (_isLoading || _file == null) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    if (widget.asset.type == AssetType.video) {
+      return _VideoPlayerWidget(file: _file!);
+    } else {
+      return InteractiveViewer(
+        child: Image.file(
+          _file!,
+          fit: BoxFit.contain,
+        ),
+      );
+    }
+  }
+}
+
+// Video player with full controls (pause/play, timeline, skip)
+class _VideoPlayerWidget extends StatefulWidget {
+  final File file;
+
+  const _VideoPlayerWidget({required this.file});
+
+  @override
+  State<_VideoPlayerWidget> createState() => _VideoPlayerWidgetState();
+}
+
+class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
+  late VideoPlayerController _controller;
+  bool _initialized = false;
+  bool _showControls = true;
+  bool _isFullscreen = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = VideoPlayerController.file(widget.file)
+      ..initialize().then((_) {
+        if (mounted) {
+          setState(() => _initialized = true);
+          _controller.play();
+          _controller.setLooping(true);
+        }
+      });
+  }
+
+  @override
+  void dispose() {
+    if (_isFullscreen) {
+      SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
+      SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+    }
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _togglePlayPause() {
+    setState(() {
+      if (_controller.value.isPlaying) {
+        _controller.pause();
+      } else {
+        _controller.play();
+      }
+      _showControls = true;
+    });
+  }
+
+  void _skipForward() {
+    final newPosition = _controller.value.position + const Duration(seconds: 10);
+    if (newPosition < _controller.value.duration) {
+      _controller.seekTo(newPosition);
+    }
+  }
+
+  void _skipBackward() {
+    final newPosition = _controller.value.position - const Duration(seconds: 10);
+    _controller.seekTo(newPosition > Duration.zero ? newPosition : Duration.zero);
+  }
+
+  void _toggleFullscreen() {
+    setState(() {
+      _isFullscreen = !_isFullscreen;
+      if (_isFullscreen) {
+        SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+        SystemChrome.setPreferredOrientations([
+          DeviceOrientation.landscapeLeft,
+          DeviceOrientation.landscapeRight,
+        ]);
+      } else {
+        SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+        SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!_initialized) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    return GestureDetector(
+      onTap: () => setState(() => _showControls = !_showControls),
+      onDoubleTap: _skipForward,
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          Center(
+            child: AspectRatio(
+              aspectRatio: _controller.value.aspectRatio,
+              child: VideoPlayer(_controller),
+            ),
+          ),
+          if (_showControls)
+            Container(
+              color: Colors.black.withOpacity(0.3),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      IconButton(
+                        icon: const Icon(Icons.replay_10, color: Colors.white, size: 48),
+                        onPressed: _skipBackward,
+                      ),
+                      const SizedBox(width: 32),
+                      IconButton(
+                        icon: Icon(
+                          _controller.value.isPlaying ? Icons.pause : Icons.play_arrow,
+                          color: Colors.white,
+                          size: 64,
+                        ),
+                        onPressed: _togglePlayPause,
+                      ),
+                      const SizedBox(width: 32),
+                      IconButton(
+                        icon: const Icon(Icons.forward_10, color: Colors.white, size: 48),
+                        onPressed: _skipForward,
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          if (_showControls)
+            Positioned(
+              bottom: 0,
+              left: 0,
+              right: 0,
+              child: Column(
+                children: [
+                  VideoProgressIndicator(
+                    _controller,
+                    allowScrubbing: true,
+                    colors: const VideoProgressColors(
+                      playedColor: Colors.white,
+                      bufferedColor: Colors.white24,
+                      backgroundColor: Colors.white10,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        ValueListenableBuilder(
+                          valueListenable: _controller,
+                          builder: (context, VideoPlayerValue value, child) {
+                            return Text(
+                              '${_formatDuration(value.position)} / ${_formatDuration(value.duration)}',
+                              style: const TextStyle(color: Colors.white),
+                            );
+                          },
+                        ),
+                        IconButton(
+                          icon: Icon(
+                            _isFullscreen ? Icons.fullscreen_exit : Icons.fullscreen,
+                            color: Colors.white,
+                          ),
+                          onPressed: _toggleFullscreen,
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  String _formatDuration(Duration duration) {
+    String twoDigits(int n) => n.toString().padLeft(2, '0');
+    final minutes = twoDigits(duration.inMinutes.remainder(60));
+    final seconds = twoDigits(duration.inSeconds.remainder(60));
+    return '$minutes:$seconds';
   }
 }

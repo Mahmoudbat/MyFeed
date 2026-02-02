@@ -1,19 +1,14 @@
-
 import 'dart:io';
+import 'dart:typed_data';
 
-import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
-import 'package:local_social_media/models/album.dart';
-import 'package:local_social_media/services/album_service.dart';
-import 'package:local_social_media/services/settings_service.dart';
-import 'package:local_social_media/services/thumbnail_service.dart';
-import 'package:path/path.dart' as path;
-import 'package:path_provider/path_provider.dart';
+import 'package:flutter/services.dart';
 import 'package:photo_manager/photo_manager.dart';
-import 'package:wechat_assets_picker/wechat_assets_picker.dart';
+import 'package:video_player/video_player.dart';
 
-import '../widgets/media_grid_item.dart';
-import 'full_screen_viewer.dart';
+import '../services/gallery_service.dart';
+import '../services/encryption_service.dart';
+import '../services/settings_service.dart';
 
 enum SortBy {
   newest,
@@ -30,212 +25,190 @@ class VaultScreen extends StatefulWidget {
 }
 
 class _VaultScreenState extends State<VaultScreen> {
+  final GalleryService _galleryService = GalleryService();
+  final EncryptionService _encryptionService = EncryptionService();
   final SettingsService _settingsService = SettingsService();
-  final ThumbnailService _thumbnailService = ThumbnailService();
-  final AlbumService _albumService = AlbumService();
-  List<File> _mediaFiles = [];
+  List<AssetEntity> _assets = [];
   bool _isLoading = true;
+  bool _permissionGranted = false;
   SortBy _sortBy = SortBy.newest;
   bool _selectionMode = false;
-  final Set<String> _selectedPaths = {};
+  final Set<String> _selectedIds = {};
+  int _currentPage = 0;
+  bool _hasMore = true;
+  bool _isLoadingMore = false;
+  final ScrollController _scrollController = ScrollController();
 
   @override
   void initState() {
     super.initState();
-    _loadSavedMedia();
+    _loadGallery();
+    _scrollController.addListener(_onScroll);
   }
 
-  Future<void> _loadSavedMedia() async {
-    setState(() => _isLoading = true);
-    final Directory appDir = await getApplicationDocumentsDirectory();
-    final List<FileSystemEntity> entities = appDir.listSync();
-    final List<File> files = entities
-        .whereType<File>()
-        .where((f) => path.basename(f.path) != 'albums.json')
-        .toList();
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
 
+  void _onScroll() {
+    if (_scrollController.position.pixels >= _scrollController.position.maxScrollExtent * 0.8) {
+      if (!_isLoadingMore && _hasMore) {
+        _loadMoreAssets();
+      }
+    }
+  }
+
+  Future<void> _loadGallery() async {
+    setState(() {
+      _isLoading = true;
+      _currentPage = 0;
+      _hasMore = true;
+      _assets.clear();
+    });
+    
+    final hasPermission = await _galleryService.requestPermissions();
+    if (!hasPermission) {
+      setState(() {
+        _isLoading = false;
+        _permissionGranted = false;
+      });
+      return;
+    }
+    
+    setState(() => _permissionGranted = true);
+    
+    final assets = await _galleryService.getAllMedia(page: 0, size: 100);
+    
+    if (assets.isEmpty || assets.length < 100) {
+      setState(() => _hasMore = false);
+    }
+    
+    // Sort assets by created date
     switch (_sortBy) {
       case SortBy.newest:
-        files.sort((a, b) => b.lastModifiedSync().compareTo(a.lastModifiedSync()));
+        assets.sort((a, b) => b.createDateTime.compareTo(a.createDateTime));
         break;
       case SortBy.oldest:
-        files.sort((a, b) => a.lastModifiedSync().compareTo(b.lastModifiedSync()));
+        assets.sort((a, b) => a.createDateTime.compareTo(b.createDateTime));
         break;
       case SortBy.nameAsc:
-        files.sort((a, b) => path.basename(a.path).compareTo(path.basename(b.path)));
+        assets.sort((a, b) => (a.title ?? '').compareTo(b.title ?? ''));
         break;
       case SortBy.nameDesc:
-        files.sort((a, b) => path.basename(b.path).compareTo(path.basename(a.path)));
+        assets.sort((a, b) => (b.title ?? '').compareTo(a.title ?? ''));
         break;
     }
-
+    
     setState(() {
-      _mediaFiles = files;
+      _assets = assets;
       _isLoading = false;
+      _currentPage = 0;
+    });
+  }
+
+  Future<void> _loadMoreAssets() async {
+    if (_isLoadingMore || !_hasMore) return;
+    
+    setState(() => _isLoadingMore = true);
+    
+    final newAssets = await _galleryService.getAllMedia(
+      page: _currentPage + 1,
+      size: 100,
+    );
+    
+    if (newAssets.isEmpty || newAssets.length < 100) {
+      setState(() => _hasMore = false);
+    }
+    
+    // Sort new assets
+    switch (_sortBy) {
+      case SortBy.newest:
+        newAssets.sort((a, b) => b.createDateTime.compareTo(a.createDateTime));
+        break;
+      case SortBy.oldest:
+        newAssets.sort((a, b) => a.createDateTime.compareTo(b.createDateTime));
+        break;
+      case SortBy.nameAsc:
+        newAssets.sort((a, b) => (a.title ?? '').compareTo(b.title ?? ''));
+        break;
+      case SortBy.nameDesc:
+        newAssets.sort((a, b) => (b.title ?? '').compareTo(a.title ?? ''));
+        break;
+    }
+    
+    setState(() {
+      _assets.addAll(newAssets);
+      _currentPage++;
+      _isLoadingMore = false;
     });
   }
 
   void _exitSelectionMode() {
     setState(() {
       _selectionMode = false;
-      _selectedPaths.clear();
+      _selectedIds.clear();
     });
   }
 
-  void _enterSelectionMode(String path) {
+  void _enterSelectionMode(String id) {
     setState(() {
       _selectionMode = true;
-      _selectedPaths.add(path);
+      _selectedIds.add(id);
     });
   }
 
-  void _toggleSelect(String filePath) {
+  void _toggleSelect(String id) {
     setState(() {
-      if (_selectedPaths.contains(filePath)) {
-        _selectedPaths.remove(filePath);
+      if (_selectedIds.contains(id)) {
+        _selectedIds.remove(id);
+        if (_selectedIds.isEmpty) {
+          _selectionMode = false;
+        }
       } else {
-        _selectedPaths.add(filePath);
+        _selectedIds.add(id);
       }
     });
   }
 
   void _selectAll() {
     setState(() {
-      for (final f in _mediaFiles) {
-        _selectedPaths.add(f.path);
+      for (final asset in _assets) {
+        _selectedIds.add(asset.id);
       }
     });
   }
 
-  List<File> get _selectedFiles =>
-      _mediaFiles.where((f) => _selectedPaths.contains(f.path)).toList();
-
-  Future<void> _deleteSelected() async {
-    final files = _selectedFiles;
-    if (files.isEmpty) return;
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Delete selected?'),
-        content: Text(
-            'Permanently delete ${files.length} item${files.length == 1 ? '' : 's'}? This cannot be undone.'),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Delete', style: TextStyle(color: Colors.red)),
-          ),
-        ],
-      ),
-    );
-    if (confirm != true || !mounted) return;
-    for (final file in files) {
-      if (await file.exists()) await file.delete();
-      final thumb = await _thumbnailService.getThumbnailFile(file);
-      if (await thumb.exists()) await thumb.delete();
-      await _albumService.removeFileFromAllAlbums(file);
-    }
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Deleted ${files.length} item(s).')));
-      _exitSelectionMode();
-      await _loadSavedMedia();
-    }
-  }
-
-  Future<void> _exportSelected() async {
-    final files = _selectedFiles;
-    if (files.isEmpty) return;
-    final dir = await FilePicker.platform.getDirectoryPath();
-    if (dir == null || !mounted) return;
-    for (final file in files) {
-      final name = path.basename(file.path);
-      await file.copy(path.join(dir, name));
-    }
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Exported ${files.length} item(s) to $dir'), backgroundColor: Colors.green),
-      );
-      _exitSelectionMode();
-    }
-  }
-
-  Future<void> _moveToAlbum() async {
-    final files = _selectedFiles;
-    if (files.isEmpty) return;
-    final albums = await _albumService.loadAlbums();
-    final customAlbums = albums.where((a) => a.isDeletable).toList();
-    if (customAlbums.isEmpty) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Create an album first (Albums tab → +)')),
-        );
-      }
-      return;
-    }
-    if (!mounted) return;
-    final chosen = await showDialog<Album>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Move to album'),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: customAlbums
-                .map((a) => ListTile(
-                      title: Text(a.name),
-                      subtitle: Text('${a.files.length} items'),
-                      onTap: () => Navigator.pop(ctx, a),
-                    ))
-                .toList(),
-          ),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
-        ],
-      ),
-    );
-    if (chosen == null || !mounted) return;
-    await _albumService.addFilesToAlbum(chosen.name, files);
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Added ${files.length} item(s) to ${chosen.name}'), backgroundColor: Colors.green),
-      );
-      _exitSelectionMode();
-    }
-  }
-
-  Future<void> _pickAndCopyMedia() async {
-    final List<AssetEntity>? assets = await AssetPicker.pickAssets(
-      context,
-      pickerConfig: const AssetPickerConfig(
-        maxAssets: 100,
-        requestType: RequestType.common,
-      ),
-    );
-
-    if (assets == null) return;
-
+  Future<void> _addToLockedGallery() async {
+    final selectedAssets = _assets.where((a) => _selectedIds.contains(a.id)).toList();
+    if (selectedAssets.isEmpty) return;
+    
     setState(() => _isLoading = true);
-    final Directory appDir = await getApplicationDocumentsDirectory();
-    final bool deleteOriginals = await _settingsService.getDeleteAfterImport();
-
-    for (final AssetEntity asset in assets) {
-      final File? file = await asset.file;
-      if (file != null) {
-        final String fileName = path.basename(file.path);
-        final String savePath = path.join(appDir.path, fileName);
-        final newFile = await file.copy(savePath);
-        final bool isVideo = ['.mp4', '.mov', '.avi'].any((ext) => fileName.toLowerCase().endsWith(ext));
-        if (isVideo) {
-          await _thumbnailService.generateAndSaveThumbnail(newFile);
+    
+    int successCount = 0;
+    for (final asset in selectedAssets) {
+      try {
+        final file = await asset.file;
+        if (file != null) {
+          await _encryptionService.encryptFile(file);
+          successCount++;
         }
-        if (deleteOriginals) {
-          await PhotoManager.editor.deleteWithIds([asset.id]);
-        }
+      } catch (e) {
+        print('Error encrypting file: $e');
       }
     }
-
-    await _loadSavedMedia();
+    
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Added $successCount item(s) to locked gallery'),
+          backgroundColor: Colors.green,
+        ),
+      );
+      _exitSelectionMode();
+      setState(() => _isLoading = false);
+    }
   }
 
   void _showSortDialog() {
@@ -248,33 +221,37 @@ class _VaultScreenState extends State<VaultScreen> {
           children: [
             ListTile(
               title: const Text('Date (Newest First)'),
+              leading: _sortBy == SortBy.newest ? const Icon(Icons.check) : null,
               onTap: () {
                 setState(() => _sortBy = SortBy.newest);
-                _loadSavedMedia();
+                _loadGallery();
                 Navigator.of(context).pop();
               },
             ),
             ListTile(
               title: const Text('Date (Oldest First)'),
+              leading: _sortBy == SortBy.oldest ? const Icon(Icons.check) : null,
               onTap: () {
                 setState(() => _sortBy = SortBy.oldest);
-                _loadSavedMedia();
+                _loadGallery();
                 Navigator.of(context).pop();
               },
             ),
             ListTile(
               title: const Text('Name (A-Z)'),
+              leading: _sortBy == SortBy.nameAsc ? const Icon(Icons.check) : null,
               onTap: () {
                 setState(() => _sortBy = SortBy.nameAsc);
-                _loadSavedMedia();
+                _loadGallery();
                 Navigator.of(context).pop();
               },
             ),
             ListTile(
               title: const Text('Name (Z-A)'),
+              leading: _sortBy == SortBy.nameDesc ? const Icon(Icons.check) : null,
               onTap: () {
                 setState(() => _sortBy = SortBy.nameDesc);
-                _loadSavedMedia();
+                _loadGallery();
                 Navigator.of(context).pop();
               },
             ),
@@ -294,83 +271,474 @@ class _VaultScreenState extends State<VaultScreen> {
                 icon: const Icon(Icons.close),
                 onPressed: _exitSelectionMode,
               ),
-              title: Text('${_selectedPaths.length} selected'),
+              title: Text('${_selectedIds.length} selected'),
               actions: [
                 IconButton(
                   icon: const Icon(Icons.select_all),
                   onPressed: _selectAll,
                   tooltip: 'Select all',
                 ),
-                PopupMenuButton<String>(
-                  icon: const Icon(Icons.more_vert),
-                  onSelected: (value) {
-                    if (value == 'delete') _deleteSelected();
-                    if (value == 'export') _exportSelected();
-                    if (value == 'move') _moveToAlbum();
-                  },
-                  itemBuilder: (ctx) => [
-                    const PopupMenuItem(value: 'export', child: Row(children: [Icon(Icons.folder_open), SizedBox(width: 8), Text('Export')])),
-                    const PopupMenuItem(value: 'move', child: Row(children: [Icon(Icons.drive_file_move), SizedBox(width: 8), Text('Move to album')])),
-                    const PopupMenuItem(value: 'delete', child: Row(children: [Icon(Icons.delete, color: Colors.red), SizedBox(width: 8), Text('Delete', style: TextStyle(color: Colors.red))])),
-                  ],
+                IconButton(
+                  icon: const Icon(Icons.lock),
+                  onPressed: _addToLockedGallery,
+                  tooltip: 'Add to locked gallery',
                 ),
               ],
             )
           : AppBar(
-              title: const Text('My Private Vault'),
+              title: const Text('Gallery'),
               centerTitle: true,
               backgroundColor: Colors.black,
               actions: [
-                IconButton(icon: const Icon(Icons.sort), onPressed: _showSortDialog),
+                IconButton(
+                  icon: const Icon(Icons.sort),
+                  onPressed: _showSortDialog,
+                ),
               ],
             ),
       backgroundColor: Colors.black,
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
-          : _mediaFiles.isEmpty
+          : !_permissionGranted
               ? Center(
-                  child: Text(
-                    'Your vault is empty.\nPress the + button to add photos and videos.',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(color: Colors.white.withOpacity(0.7)),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const Icon(Icons.photo_library, size: 64, color: Colors.white54),
+                      const SizedBox(height: 16),
+                      Text(
+                        'Gallery access required',
+                        style: TextStyle(color: Colors.white.withOpacity(0.7), fontSize: 18),
+                      ),
+                      const SizedBox(height: 8),
+                      ElevatedButton(
+                        onPressed: _loadGallery,
+                        child: const Text('Grant Permission'),
+                      ),
+                    ],
                   ),
                 )
-              : GridView.builder(
-                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: 3,
-                    crossAxisSpacing: 2,
-                    mainAxisSpacing: 2,
-                  ),
-                  itemCount: _mediaFiles.length,
-                  itemBuilder: (context, index) {
-                    final file = _mediaFiles[index];
-                    final pathStr = file.path;
-                    return MediaGridItem(
-                      file: file,
-                      index: index,
-                      isSelectionMode: _selectionMode,
-                      isSelected: _selectedPaths.contains(pathStr),
-                      onLongPress: () => _enterSelectionMode(pathStr),
-                      onToggleSelect: () => _toggleSelect(pathStr),
-                      onTap: () {
-                        Navigator.of(context).push(
-                          MaterialPageRoute(
-                            builder: (_) => FullScreenViewer(
-                              files: _mediaFiles,
-                              initialIndex: index,
-                            ),
+              : _assets.isEmpty
+                  ? Center(
+                      child: Text(
+                        'No media found in your gallery.',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(color: Colors.white.withOpacity(0.7)),
+                      ),
+                    )
+                  : GridView.builder(
+                      controller: _scrollController,
+                      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                        crossAxisCount: 3,
+                        crossAxisSpacing: 2,
+                        mainAxisSpacing: 2,
+                      ),
+                      itemCount: _assets.length + (_hasMore ? 1 : 0),
+                      itemBuilder: (context, index) {
+                        if (index >= _assets.length) {
+                          return const Center(child: CircularProgressIndicator());
+                        }
+                        
+                        final asset = _assets[index];
+                        final isSelected = _selectedIds.contains(asset.id);
+                        
+                        return GestureDetector(
+                          onTap: () {
+                            if (_selectionMode) {
+                              _toggleSelect(asset.id);
+                            } else {
+                              _openFullScreen(index);
+                            }
+                          },
+                          onLongPress: () => _enterSelectionMode(asset.id),
+                          child: Stack(
+                            fit: StackFit.expand,
+                            children: [
+                              FutureBuilder<Uint8List?>(
+                                future: asset.thumbnailDataWithSize(const ThumbnailSize(200, 200)),
+                                builder: (context, snapshot) {
+                                  if (snapshot.hasData && snapshot.data != null) {
+                                    return Image.memory(
+                                      snapshot.data!,
+                                      fit: BoxFit.cover,
+                                    );
+                                  }
+                                  return Container(
+                                    color: Colors.grey[900],
+                                    child: const Center(
+                                      child: CircularProgressIndicator(),
+                                    ),
+                                  );
+                                },
+                              ),
+                              if (asset.type == AssetType.video)
+                                Positioned(
+                                  bottom: 4,
+                                  right: 4,
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                                    decoration: BoxDecoration(
+                                      color: Colors.black.withOpacity(0.7),
+                                      borderRadius: BorderRadius.circular(4),
+                                    ),
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        const Icon(Icons.play_arrow, size: 14, color: Colors.white),
+                                        const SizedBox(width: 2),
+                                        Text(
+                                          _formatDuration(asset.duration),
+                                          style: const TextStyle(color: Colors.white, fontSize: 10),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              if (_selectionMode)
+                                Positioned(
+                                  top: 4,
+                                  right: 4,
+                                  child: Container(
+                                    width: 24,
+                                    height: 24,
+                                    decoration: BoxDecoration(
+                                      shape: BoxShape.circle,
+                                      color: isSelected ? Colors.blue : Colors.white.withOpacity(0.3),
+                                      border: Border.all(color: Colors.white, width: 2),
+                                    ),
+                                    child: isSelected
+                                        ? const Icon(Icons.check, size: 16, color: Colors.white)
+                                        : null,
+                                  ),
+                                ),
+                            ],
                           ),
-                        ).then((_) => _loadSavedMedia());
+                        );
                       },
-                    );
-                  },
-                ),
-      floatingActionButton: _selectionMode
-          ? null
-          : FloatingActionButton(
-              onPressed: _pickAndCopyMedia,
-              child: const Icon(Icons.add),
-            ),
+                    ),
     );
+  }
+
+  void _openFullScreen(int index) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => _FullScreenAssetViewer(
+          assets: _assets,
+          initialIndex: index,
+          settingsService: _settingsService,
+        ),
+      ),
+    );
+  }
+
+  String _formatDuration(int seconds) {
+    final duration = Duration(seconds: seconds);
+    final minutes = duration.inMinutes;
+    final secs = duration.inSeconds % 60;
+    return '${minutes}:${secs.toString().padLeft(2, '0')}';
+  }
+}
+
+// Full screen viewer with vertical/horizontal scrolling
+class _FullScreenAssetViewer extends StatefulWidget {
+  final List<AssetEntity> assets;
+  final int initialIndex;
+  final SettingsService settingsService;
+
+  const _FullScreenAssetViewer({
+    required this.assets,
+    required this.initialIndex,
+    required this.settingsService,
+  });
+
+  @override
+  State<_FullScreenAssetViewer> createState() => _FullScreenAssetViewerState();
+}
+
+class _FullScreenAssetViewerState extends State<_FullScreenAssetViewer> {
+  late PageController _pageController;
+  late int _currentIndex;
+  bool _verticalScrolling = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _currentIndex = widget.initialIndex;
+    _pageController = PageController(initialPage: widget.initialIndex);
+    _loadScrollPreference();
+  }
+
+  @override
+  void dispose() {
+    _pageController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadScrollPreference() async {
+    final vertical = await widget.settingsService.getScrollDirectionVertical();
+    if (mounted) {
+      setState(() => _verticalScrolling = vertical);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      appBar: AppBar(
+        backgroundColor: Colors.transparent,
+        title: Text('${_currentIndex + 1} / ${widget.assets.length}'),
+      ),
+      body: PageView.builder(
+        controller: _pageController,
+        scrollDirection: _verticalScrolling ? Axis.vertical : Axis.horizontal,
+        itemCount: widget.assets.length,
+        onPageChanged: (index) => setState(() => _currentIndex = index),
+        itemBuilder: (context, index) {
+          final asset = widget.assets[index];
+          return _AssetViewItem(asset: asset);
+        },
+      ),
+    );
+  }
+}
+
+// Cached asset view item to reduce glitches
+class _AssetViewItem extends StatefulWidget {
+  final AssetEntity asset;
+
+  const _AssetViewItem({required this.asset});
+
+  @override
+  State<_AssetViewItem> createState() => _AssetViewItemState();
+}
+
+class _AssetViewItemState extends State<_AssetViewItem> with AutomaticKeepAliveClientMixin {
+  File? _file;
+  bool _isLoading = true;
+
+  @override
+  bool get wantKeepAlive => true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadFile();
+  }
+
+  Future<void> _loadFile() async {
+    final file = await widget.asset.file;
+    if (mounted) {
+      setState(() {
+        _file = file;
+        _isLoading = false;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    super.build(context);
+    
+    if (_isLoading || _file == null) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    if (widget.asset.type == AssetType.video) {
+      return _VideoPlayerWithControls(file: _file!);
+    } else {
+      return InteractiveViewer(
+        child: Image.file(
+          _file!,
+          fit: BoxFit.contain,
+        ),
+      );
+    }
+  }
+}
+
+// Video player with full controls
+class _VideoPlayerWithControls extends StatefulWidget {
+  final File file;
+
+  const _VideoPlayerWithControls({required this.file});
+
+  @override
+  State<_VideoPlayerWithControls> createState() => _VideoPlayerWithControlsState();
+}
+
+class _VideoPlayerWithControlsState extends State<_VideoPlayerWithControls> {
+  late VideoPlayerController _controller;
+  bool _initialized = false;
+  bool _showControls = true;
+  bool _isFullscreen = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = VideoPlayerController.file(widget.file)
+      ..initialize().then((_) {
+        if (mounted) {
+          setState(() => _initialized = true);
+          _controller.play();
+          _controller.setLooping(true);
+        }
+      });
+  }
+
+  @override
+  void dispose() {
+    if (_isFullscreen) {
+      SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
+      SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+    }
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _togglePlayPause() {
+    setState(() {
+      if (_controller.value.isPlaying) {
+        _controller.pause();
+      } else {
+        _controller.play();
+      }
+      _showControls = true;
+    });
+  }
+
+  void _skipForward() {
+    final newPosition = _controller.value.position + const Duration(seconds: 10);
+    if (newPosition < _controller.value.duration) {
+      _controller.seekTo(newPosition);
+    }
+  }
+
+  void _skipBackward() {
+    final newPosition = _controller.value.position - const Duration(seconds: 10);
+    _controller.seekTo(newPosition > Duration.zero ? newPosition : Duration.zero);
+  }
+
+  void _toggleFullscreen() {
+    setState(() {
+      _isFullscreen = !_isFullscreen;
+      if (_isFullscreen) {
+        SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+        SystemChrome.setPreferredOrientations([
+          DeviceOrientation.landscapeLeft,
+          DeviceOrientation.landscapeRight,
+        ]);
+      } else {
+        SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+        SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!_initialized) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    return GestureDetector(
+      onTap: () => setState(() => _showControls = !_showControls),
+      onDoubleTap: _skipForward,
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          Center(
+            child: AspectRatio(
+              aspectRatio: _controller.value.aspectRatio,
+              child: VideoPlayer(_controller),
+            ),
+          ),
+          if (_showControls)
+            Container(
+              color: Colors.black.withOpacity(0.3),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      IconButton(
+                        icon: const Icon(Icons.replay_10, color: Colors.white, size: 48),
+                        onPressed: _skipBackward,
+                      ),
+                      const SizedBox(width: 32),
+                      IconButton(
+                        icon: Icon(
+                          _controller.value.isPlaying ? Icons.pause : Icons.play_arrow,
+                          color: Colors.white,
+                          size: 64,
+                        ),
+                        onPressed: _togglePlayPause,
+                      ),
+                      const SizedBox(width: 32),
+                      IconButton(
+                        icon: const Icon(Icons.forward_10, color: Colors.white, size: 48),
+                        onPressed: _skipForward,
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          if (_showControls)
+            Positioned(
+              bottom: 0,
+              left: 0,
+              right: 0,
+              child: Column(
+                children: [
+                  VideoProgressIndicator(
+                    _controller,
+                    allowScrubbing: true,
+                    colors: const VideoProgressColors(
+                      playedColor: Colors.white,
+                      bufferedColor: Colors.white24,
+                      backgroundColor: Colors.white10,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        ValueListenableBuilder(
+                          valueListenable: _controller,
+                          builder: (context, VideoPlayerValue value, child) {
+                            return Text(
+                              '${_formatDuration(value.position)} / ${_formatDuration(value.duration)}',
+                              style: const TextStyle(color: Colors.white),
+                            );
+                          },
+                        ),
+                        IconButton(
+                          icon: Icon(
+                            _isFullscreen ? Icons.fullscreen_exit : Icons.fullscreen,
+                            color: Colors.white,
+                          ),
+                          onPressed: _toggleFullscreen,
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  String _formatDuration(Duration duration) {
+    String twoDigits(int n) => n.toString().padLeft(2, '0');
+    final minutes = twoDigits(duration.inMinutes.remainder(60));
+    final seconds = twoDigits(duration.inSeconds.remainder(60));
+    return '$minutes:$seconds';
   }
 }
