@@ -52,3 +52,35 @@ android/build/
 .idea/
 .vscode/
 .DS_Store
+
+# Local SDK paths and generated plugin files
+local.properties
+android/app/src/main/java/io/flutter/plugins/
+
+# ---------------------------------------------------------------------------
+# Secrets: never commit these, anywhere in the repo
+# ---------------------------------------------------------------------------
+# Android release signing (keystore + its passwords)
+key.properties
+*.jks
+*.keystore
+# Other private keys / certificates
+*.p12
+*.pfx
+*.pem
+*.p8
+*.key
+*.mobileprovision
+# Environment files and service credentials
+.env
+.env.*
+!.env.example
+*service-account*.json
+google-services.json
+GoogleService-Info.plist
+secrets/
+
+# Built apps (share them from build/ or a release, not via git)
+*.apk
+*.aab
+*.ipa
