@@ -1,194 +1,164 @@
-import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:photo_manager/photo_manager.dart';
-import 'package:local_social_media/widgets/video_player_widget.dart';
+
 import '../services/gallery_service.dart';
+import 'asset_grid_screen.dart';
 
+/// Vertical, shuffled feed of every video on the device.
+///
+/// Only a shuffled list of indices is kept in memory; each page fetches its
+/// own asset, so there is no cap on library size.
 class ReelsScreen extends StatefulWidget {
-  final int selectedTabIndex;
+  const ReelsScreen({super.key, required this.active});
 
-  const ReelsScreen({super.key, required this.selectedTabIndex});
+  /// Whether the Reels tab is visible (videos pause otherwise).
+  final bool active;
 
   @override
   State<ReelsScreen> createState() => _ReelsScreenState();
 }
 
 class _ReelsScreenState extends State<ReelsScreen> {
-  final GalleryService _galleryService = GalleryService();
-  List<AssetEntity> _videoAssets = [];
-  bool _isLoading = true;
-  bool _permissionGranted = false;
-  final PageController _pageController = PageController();
-  int _currentPageIndex = 0;
-
-  static const int _reelsTabIndex = 1;
+  final _gallery = GalleryService.instance;
+  final PageController _controller = PageController();
+  AssetPathEntity? _path;
+  List<int> _order = [];
+  int _current = 0;
+  bool _loading = true;
+  bool _permission = true;
 
   @override
   void initState() {
     super.initState();
-    _loadVideos();
+    _gallery.changes.addListener(_load);
+    _load();
   }
 
   @override
   void dispose() {
-    _pageController.dispose();
+    _gallery.changes.removeListener(_load);
+    _controller.dispose();
     super.dispose();
   }
 
-  Future<void> _loadVideos() async {
-    setState(() => _isLoading = true);
-    
-    final hasPermission = await _galleryService.requestPermissions();
-    if (!hasPermission) {
-      setState(() {
-        _isLoading = false;
-        _permissionGranted = false;
-      });
+  Future<void> _load({bool reshuffle = false}) async {
+    if (!await _gallery.ensurePermission()) {
+      if (mounted) {
+        setState(() {
+          _permission = false;
+          _loading = false;
+        });
+      }
       return;
     }
-    
-    setState(() => _permissionGranted = true);
-    
-    final videos = await _galleryService.getVideos(page: 0, size: 1000);
-    videos.shuffle();
-
+    final path = await _gallery.allMedia(type: RequestType.video);
+    final count = path == null ? 0 : await path.assetCountAsync;
+    if (!mounted) return;
     setState(() {
-      _videoAssets = videos;
-      _isLoading = false;
+      _permission = true;
+      _path = path;
+      // Keep the current order when the library changes, unless asked to reshuffle.
+      if (reshuffle || _order.length != count) {
+        _order = List<int>.generate(count, (i) => i)..shuffle();
+        _current = 0;
+        if (_controller.hasClients) _controller.jumpToPage(0);
+      }
+      _loading = false;
     });
   }
 
   @override
   Widget build(BuildContext context) {
-    final isLandscape = MediaQuery.of(context).orientation == Orientation.landscape;
+    final landscape = MediaQuery.orientationOf(context) == Orientation.landscape;
     return Scaffold(
       backgroundColor: Colors.black,
-      extendBodyBehindAppBar: isLandscape,
-      appBar: isLandscape
+      extendBodyBehindAppBar: true,
+      appBar: landscape
           ? null
           : AppBar(
               title: const Text('Reels'),
-              centerTitle: true,
-              backgroundColor: Colors.black,
+              backgroundColor: Colors.transparent,
               actions: [
-                IconButton(
-                  icon: const Icon(Icons.shuffle),
-                  onPressed: _loadVideos,
-                ),
+                IconButton(tooltip: 'Shuffle', icon: const Icon(Icons.shuffle), onPressed: () => _load(reshuffle: true)),
               ],
             ),
-      body: _isLoading
+      body: _loading
           ? const Center(child: CircularProgressIndicator())
-          : !_permissionGranted
-              ? Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      const Icon(Icons.video_library, size: 64, color: Colors.white54),
-                      const SizedBox(height: 16),
-                      Text(
-                        'Gallery access required',
-                        style: TextStyle(color: Colors.white.withOpacity(0.7), fontSize: 18),
-                      ),
-                      const SizedBox(height: 8),
-                      ElevatedButton(
-                        onPressed: _loadVideos,
-                        child: const Text('Grant Permission'),
-                      ),
-                    ],
-                  ),
-                )
-              : _videoAssets.isEmpty
-                  ? const Center(
-                      child: Text(
-                        'No videos found in your gallery.',
-                        style: TextStyle(color: Colors.white70),
-                      ),
-                    )
+          : !_permission
+              ? PermissionPrompt(onRetry: () async {
+                  await _gallery.ensurePermission(force: true);
+                  _load();
+                })
+              : _order.isEmpty
+                  ? const Center(child: Text('No videos found in your gallery.', style: TextStyle(color: Colors.white70)))
                   : PageView.builder(
-                      controller: _pageController,
+                      controller: _controller,
                       scrollDirection: Axis.vertical,
-                      itemCount: _videoAssets.length,
-                      onPageChanged: (index) => setState(() => _currentPageIndex = index),
-                      itemBuilder: (context, index) {
-                        final asset = _videoAssets[index];
-                        final isReelsTab = widget.selectedTabIndex == _reelsTabIndex;
-                        final isCurrentReel = _currentPageIndex == index;
-                        final isVisible = isReelsTab && isCurrentReel;
-
-                        return FutureBuilder<File?>(
-                          future: asset.file,
-                          builder: (context, snapshot) {
-                            if (!snapshot.hasData || snapshot.data == null) {
-                              return const Center(child: CircularProgressIndicator());
-                            }
-
-                            final file = snapshot.data!;
-                            final fileName = asset.title ?? 'Video';
-
-                            return Stack(
-                              fit: StackFit.expand,
-                              children: [
-                                Center(
-                                  child: VideoPlayerWidget(
-                                    file: file,
-                                    isVisible: isVisible,
-                                    showProgressBar: true,
-                                  ),
-                                ),
-                                if (!isLandscape) ...[
-                                  Positioned(
-                                    bottom: 0,
-                                    left: 0,
-                                    right: 0,
-                                    child: IgnorePointer(
-                                      child: Container(
-                                        height: 150,
-                                        decoration: const BoxDecoration(
-                                          gradient: LinearGradient(
-                                            begin: Alignment.bottomCenter,
-                                            end: Alignment.topCenter,
-                                            colors: [Colors.black87, Colors.transparent],
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                  Positioned(
-                                    bottom: 20,
-                                    left: 16,
-                                    right: 16,
-                                    child: IgnorePointer(
-                                      child: Column(
-                                        crossAxisAlignment: CrossAxisAlignment.start,
-                                        mainAxisSize: MainAxisSize.min,
-                                        children: [
-                                          const Text(
-                                            "@Me",
-                                            style: TextStyle(
-                                              color: Colors.white,
-                                              fontWeight: FontWeight.bold,
-                                              fontSize: 16,
-                                            ),
-                                          ),
-                                          const SizedBox(height: 8),
-                                          Text(
-                                            fileName,
-                                            maxLines: 2,
-                                            overflow: TextOverflow.ellipsis,
-                                            style: const TextStyle(color: Colors.white70, fontSize: 14),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ],
-                            );
-                          },
-                        );
-                      },
+                      itemCount: _order.length,
+                      onPageChanged: (i) => setState(() => _current = i),
+                      itemBuilder: (context, i) => _ReelPage(
+                        key: ValueKey('${_path?.id}-${_order[i]}'),
+                        path: _path!,
+                        index: _order[i],
+                        active: widget.active && i == _current,
+                        showCaption: !landscape,
+                      ),
                     ),
+    );
+  }
+}
+
+class _ReelPage extends StatefulWidget {
+  const _ReelPage({super.key, required this.path, required this.index, required this.active, required this.showCaption});
+
+  final AssetPathEntity path;
+  final int index;
+  final bool active;
+  final bool showCaption;
+
+  @override
+  State<_ReelPage> createState() => _ReelPageState();
+}
+
+class _ReelPageState extends State<_ReelPage> {
+  late final Future<AssetEntity?> _asset = widget.path
+      .getAssetListRange(start: widget.index, end: widget.index + 1)
+      .then((list) => list.isEmpty ? null : list.first);
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<AssetEntity?>(
+      future: _asset,
+      builder: (context, snapshot) {
+        final asset = snapshot.data;
+        if (asset == null) {
+          return snapshot.connectionState == ConnectionState.done
+              ? const Center(child: Icon(Icons.error_outline, color: Colors.white54))
+              : const Center(child: CircularProgressIndicator());
+        }
+        return Stack(
+          fit: StackFit.expand,
+          children: [
+            AssetPage(asset: asset, active: widget.active, compact: true),
+            if (widget.showCaption)
+              Positioned(
+                left: 16,
+                right: 16,
+                bottom: 24,
+                child: IgnorePointer(
+                  child: Text(
+                    asset.title ?? 'Video',
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, shadows: [
+                      Shadow(blurRadius: 6, color: Colors.black),
+                    ]),
+                  ),
+                ),
+              ),
+          ],
+        );
+      },
     );
   }
 }

@@ -1,114 +1,99 @@
+import 'dart:async';
 import 'dart:io';
+
+import 'package:flutter/foundation.dart';
 import 'package:photo_manager/photo_manager.dart';
-import 'package:permission_handler/permission_handler.dart';
 
+enum GallerySort { newest, oldest, nameAsc, nameDesc }
+
+extension GallerySortLabel on GallerySort {
+  String get label => switch (this) {
+        GallerySort.newest => 'Date (newest first)',
+        GallerySort.oldest => 'Date (oldest first)',
+        GallerySort.nameAsc => 'Name (A–Z)',
+        GallerySort.nameDesc => 'Name (Z–A)',
+      };
+
+  bool get byName => this == GallerySort.nameAsc || this == GallerySort.nameDesc;
+}
+
+/// Thin wrapper around photo_manager shared by every screen, so the
+/// permission is requested once instead of by each tab independently.
 class GalleryService {
-  // Request gallery permissions
-  Future<bool> requestPermissions() async {
-    final PermissionState result = await PhotoManager.requestPermissionExtend();
-    return result.isAuth || result.hasAccess;
+  GalleryService._();
+  static final GalleryService instance = GalleryService._();
+
+  Future<bool>? _permission;
+  bool _watching = false;
+  Timer? _debounce;
+
+  /// Bumped whenever the device gallery changes (items added/removed by us or
+  /// other apps), so open grids can refresh.
+  final ValueNotifier<int> changes = ValueNotifier(0);
+
+  /// Requests gallery access once per app run (re-requested only after a denial).
+  Future<bool> ensurePermission({bool force = false}) {
+    if (force || _permission == null) {
+      final request = PhotoManager.requestPermissionExtend().then((s) => s.hasAccess);
+      _permission = request;
+      request.then((granted) {
+        if (!granted) {
+          _permission = null;
+        } else {
+          _startWatching();
+        }
+      });
+    }
+    return _permission!;
   }
 
-  // Get all media from device gallery
-  Future<List<AssetEntity>> getAllMedia({
-    int page = 0,
-    int size = 100,
-  }) async {
-    final permitted = await requestPermissions();
-    if (!permitted) return [];
-
-    final List<AssetPathEntity> albums = await PhotoManager.getAssetPathList(
-      type: RequestType.common, // Gets both images and videos
-      onlyAll: true, // Only get the "all" album
-    );
-
-    if (albums.isEmpty) return [];
-
-    final recentAlbum = albums.first;
-    final assets = await recentAlbum.getAssetListPaged(
-      page: page,
-      size: size,
-    );
-
-    return assets;
+  void _startWatching() {
+    if (_watching) return;
+    _watching = true;
+    PhotoManager.addChangeCallback((_) {
+      _debounce?.cancel();
+      _debounce = Timer(const Duration(milliseconds: 600), () => changes.value++);
+    });
+    PhotoManager.startChangeNotify();
   }
 
-  // Get only images
-  Future<List<AssetEntity>> getImages({
-    int page = 0,
-    int size = 100,
-  }) async {
-    final permitted = await requestPermissions();
-    if (!permitted) return [];
+  static FilterOptionGroup _filter({bool ascending = false}) => FilterOptionGroup(
+        orders: [OrderOption(type: OrderOptionType.createDate, asc: ascending)],
+      );
 
-    final List<AssetPathEntity> albums = await PhotoManager.getAssetPathList(
-      type: RequestType.image,
+  /// The device-wide "Recent"/"All" album.
+  Future<AssetPathEntity?> allMedia({
+    RequestType type = RequestType.common,
+    bool ascending = false,
+  }) async {
+    if (!await ensurePermission()) return null;
+    final paths = await PhotoManager.getAssetPathList(
+      type: type,
       onlyAll: true,
+      filterOption: _filter(ascending: ascending),
     );
-
-    if (albums.isEmpty) return [];
-
-    final recentAlbum = albums.first;
-    final assets = await recentAlbum.getAssetListPaged(
-      page: page,
-      size: size,
-    );
-
-    return assets;
+    return paths.isEmpty ? null : paths.first;
   }
 
-  // Get only videos
-  Future<List<AssetEntity>> getVideos({
-    int page = 0,
-    int size = 100,
-  }) async {
-    final permitted = await requestPermissions();
-    if (!permitted) return [];
-
-    final List<AssetPathEntity> albums = await PhotoManager.getAssetPathList(
-      type: RequestType.video,
-      onlyAll: true,
-    );
-
-    if (albums.isEmpty) return [];
-
-    final recentAlbum = albums.first;
-    final assets = await recentAlbum.getAssetListPaged(
-      page: page,
-      size: size,
-    );
-
-    return assets;
+  Future<List<AssetPathEntity>> albums() async {
+    if (!await ensurePermission()) return [];
+    return PhotoManager.getAssetPathList(type: RequestType.common, filterOption: _filter());
   }
 
-  // Get file from asset
-  Future<File?> getFileFromAsset(AssetEntity asset) async {
-    return await asset.file;
+  /// Re-applies a date sort order to an album obtained elsewhere.
+  Future<AssetPathEntity> withOrder(AssetPathEntity path, {required bool ascending}) async =>
+      await path.fetchPathProperties(filterOptionGroup: _filter(ascending: ascending)) ?? path;
+
+  /// Deletes originals from the device gallery. On Android 11+ the system
+  /// asks the user to confirm. Returns the ids actually deleted.
+  Future<List<String>> deleteOriginals(List<String> ids) async {
+    if (ids.isEmpty) return [];
+    return PhotoManager.editor.deleteWithIds(ids);
   }
 
-  // Get thumbnail data
-  Future<List<int>?> getThumbnail(
-    AssetEntity asset, {
-    int width = 200,
-    int height = 200,
-  }) async {
-    return await asset.thumbnailDataWithSize(
-      ThumbnailSize(width, height),
-    );
-  }
+  Future<AssetEntity> saveImage(File file, String title, DateTime? created) =>
+      PhotoManager.editor.saveImageWithPath(file.path, title: title, creationDate: created);
 
-  // Get all albums from device
-  Future<List<AssetPathEntity>> getAllAlbums() async {
-    final permitted = await requestPermissions();
-    if (!permitted) return [];
-
-    return await PhotoManager.getAssetPathList(
-      type: RequestType.common,
-    );
-  }
-
-  // Refresh gallery (call when permissions are granted)
-  Future<void> refreshGallery() async {
-    await PhotoManager.clearFileCache();
-  }
+  Future<AssetEntity> saveVideo(File file, String title, DateTime? created) =>
+      PhotoManager.editor.saveVideo(file, title: title, creationDate: created);
 }
