@@ -3,9 +3,9 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:local_social_media/vault/models.dart';
-import 'package:local_social_media/vault/vault_keys.dart';
-import 'package:local_social_media/vault/vault_store.dart';
+import 'package:myfeed/vault/models.dart';
+import 'package:myfeed/vault/vault_keys.dart';
+import 'package:myfeed/vault/vault_store.dart';
 
 void main() {
   late Directory dir;

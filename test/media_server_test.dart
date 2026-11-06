@@ -2,10 +2,10 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:local_social_media/vault/chunked_cipher.dart';
-import 'package:local_social_media/vault/media_server.dart';
-import 'package:local_social_media/vault/models.dart';
-import 'package:local_social_media/vault/vault_store.dart';
+import 'package:myfeed/vault/chunked_cipher.dart';
+import 'package:myfeed/vault/media_server.dart';
+import 'package:myfeed/vault/models.dart';
+import 'package:myfeed/vault/vault_store.dart';
 
 void main() {
   group('range parsing', () {

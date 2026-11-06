@@ -1,4 +1,4 @@
-name: local_social_media
+name: myfeed
 description: "Offline media feed with an encrypted locked gallery."
 publish_to: 'none'
 

@@ -4,7 +4,7 @@ import 'dart:typed_data';
 
 import 'package:cryptography/cryptography.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:local_social_media/vault/chunked_cipher.dart';
+import 'package:myfeed/vault/chunked_cipher.dart';
 
 Uint8List randomBytes(int n, [int seed = 1]) {
   final r = Random(seed);

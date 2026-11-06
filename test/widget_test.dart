@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:local_social_media/util/format.dart';
-import 'package:local_social_media/widgets/media_tile.dart';
+import 'package:myfeed/util/format.dart';
+import 'package:myfeed/widgets/media_tile.dart';
 
 void main() {
   test('formatDuration keeps hours', () {

@@ -1,4 +1,4 @@
-package com.example.local_social_media
+package com.imle.myfeed
 
 import android.view.WindowManager
 import io.flutter.embedding.android.FlutterFragmentActivity
