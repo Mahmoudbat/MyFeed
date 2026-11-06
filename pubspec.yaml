@@ -30,7 +30,16 @@ dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^6.0.0
+  flutter_launcher_icons: ^0.14.4
 
 flutter:
   uses-material-design: true
 
+flutter_launcher_icons:
+  android: true
+  ios: false
+  image_path: "assets/icon/myfeed_icon.png"
+  # Android 8+ adaptive icon: background colour + your image on top
+  adaptive_icon_background: "#14181F"
+  adaptive_icon_foreground: "assets/icon/myfeed_icon_adaptive.png"
+  min_sdk_android: 24
