@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
-import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
 import 'package:photo_manager/photo_manager.dart';
 
 enum GallerySort { newest, oldest, nameAsc, nameDesc }
@@ -15,6 +15,29 @@ extension GallerySortLabel on GallerySort {
       };
 
   bool get byName => this == GallerySort.nameAsc || this == GallerySort.nameDesc;
+}
+
+/// Which media types a grid shows.
+enum MediaFilter { all, photos, videos }
+
+extension MediaFilterInfo on MediaFilter {
+  String get label => switch (this) {
+        MediaFilter.all => 'Photos & videos',
+        MediaFilter.photos => 'Photos only',
+        MediaFilter.videos => 'Videos only',
+      };
+
+  RequestType get requestType => switch (this) {
+        MediaFilter.all => RequestType.common,
+        MediaFilter.photos => RequestType.image,
+        MediaFilter.videos => RequestType.video,
+      };
+
+  IconData get icon => switch (this) {
+        MediaFilter.all => Icons.perm_media_outlined,
+        MediaFilter.photos => Icons.photo_outlined,
+        MediaFilter.videos => Icons.videocam_outlined,
+      };
 }
 
 /// Thin wrapper around photo_manager shared by every screen, so the
@@ -80,9 +103,24 @@ class GalleryService {
     return PhotoManager.getAssetPathList(type: RequestType.common, filterOption: _filter());
   }
 
-  /// Re-applies a date sort order to an album obtained elsewhere.
-  Future<AssetPathEntity> withOrder(AssetPathEntity path, {required bool ascending}) async =>
-      await path.fetchPathProperties(filterOptionGroup: _filter(ascending: ascending)) ?? path;
+  /// Re-opens an album obtained elsewhere with a media-type filter and date
+  /// order applied. Returns null when the album has nothing of that type.
+  Future<AssetPathEntity?> albumView(
+    AssetPathEntity album, {
+    required RequestType type,
+    required bool ascending,
+  }) async {
+    try {
+      return await AssetPathEntity.obtainPathFromProperties(
+        id: album.id,
+        albumType: album.albumType,
+        type: type,
+        optionGroup: _filter(ascending: ascending),
+      );
+    } on StateError {
+      return null; // no assets of this type in the album
+    }
+  }
 
   /// Deletes originals from the device gallery. On Android 11+ the system
   /// asks the user to confirm. Returns the ids actually deleted.

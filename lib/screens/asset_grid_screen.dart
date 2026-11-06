@@ -32,6 +32,7 @@ class _AssetGridScreenState extends State<AssetGridScreen> {
   final _gallery = GalleryService.instance;
 
   GallerySort _sort = GallerySort.newest;
+  MediaFilter _filter = MediaFilter.all;
   AssetPathEntity? _path;
   List<AssetEntity> _assets = [];
   int _total = 0;
@@ -73,9 +74,10 @@ class _AssetGridScreenState extends State<AssetGridScreen> {
         return;
       }
       final ascending = _sort == GallerySort.oldest;
+      final type = _filter.requestType;
       final path = widget.album == null
-          ? await _gallery.allMedia(ascending: ascending)
-          : await _gallery.withOrder(widget.album!, ascending: ascending);
+          ? await _gallery.allMedia(type: type, ascending: ascending)
+          : await _gallery.albumView(widget.album!, type: type, ascending: ascending);
       final total = path == null ? 0 : await path.assetCountAsync;
       List<AssetEntity> assets;
       if (path == null || total == 0) {
@@ -178,23 +180,49 @@ class _AssetGridScreenState extends State<AssetGridScreen> {
   }
 
   void _showSortMenu() async {
-    final choice = await showModalBottomSheet<GallerySort>(
+    // Returns either a MediaFilter or a GallerySort.
+    final choice = await showModalBottomSheet<Object>(
       context: context,
-      builder: (context) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            for (final sort in GallerySort.values)
-              ListTile(
-                title: Text(sort.label),
-                trailing: sort == _sort ? const Icon(Icons.check) : null,
-                onTap: () => Navigator.pop(context, sort),
-              ),
-          ],
-        ),
-      ),
+      builder: (context) {
+        Widget header(String text) => Padding(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
+              child: Text(text, style: Theme.of(context).textTheme.labelLarge?.copyWith(color: Colors.white60)),
+            );
+        return SafeArea(
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                header('Show'),
+                for (final filter in MediaFilter.values)
+                  ListTile(
+                    leading: Icon(filter.icon),
+                    title: Text(filter.label),
+                    trailing: filter == _filter ? const Icon(Icons.check) : null,
+                    onTap: () => Navigator.pop(context, filter),
+                  ),
+                const Divider(),
+                header('Sort by'),
+                for (final sort in GallerySort.values)
+                  ListTile(
+                    title: Text(sort.label),
+                    trailing: sort == _sort ? const Icon(Icons.check) : null,
+                    onTap: () => Navigator.pop(context, sort),
+                  ),
+              ],
+            ),
+          ),
+        );
+      },
     );
-    if (choice != null && choice != _sort) {
+    if (choice is MediaFilter && choice != _filter) {
+      setState(() {
+        _filter = choice;
+        _selected.clear();
+      });
+      _load();
+    } else if (choice is GallerySort && choice != _sort) {
       _sort = choice;
       _load();
     }
@@ -227,13 +255,31 @@ class _AssetGridScreenState extends State<AssetGridScreen> {
                 ],
               )
             : AppBar(
-                title: Text(widget.title),
-                actions: [IconButton(tooltip: 'Sort', icon: const Icon(Icons.sort), onPressed: _showSortMenu)],
+                title: _filter == MediaFilter.all
+                    ? Text(widget.title)
+                    : Row(mainAxisSize: MainAxisSize.min, children: [
+                        Flexible(child: Text(widget.title, overflow: TextOverflow.ellipsis)),
+                        const SizedBox(width: 8),
+                        Icon(_filter.icon, size: 20, color: Colors.white70),
+                      ]),
+                actions: [
+                  IconButton(
+                    tooltip: 'Filter and sort',
+                    icon: Icon(_filter == MediaFilter.all ? Icons.sort : Icons.filter_alt),
+                    onPressed: _showSortMenu,
+                  ),
+                ],
               ),
         body: _buildBody(),
       ),
     );
   }
+
+  String get _emptyText => switch (_filter) {
+        MediaFilter.all => 'No media found.',
+        MediaFilter.photos => 'No photos found.',
+        MediaFilter.videos => 'No videos found.',
+      };
 
   Widget _buildBody() {
     if (_loading) return const Center(child: CircularProgressIndicator());
@@ -249,9 +295,9 @@ class _AssetGridScreenState extends State<AssetGridScreen> {
     return RefreshIndicator(
       onRefresh: _load,
       child: _assets.isEmpty
-          ? ListView(children: const [
-              SizedBox(height: 200),
-              Center(child: Text('No media found.', style: TextStyle(color: Colors.white70))),
+          ? ListView(children: [
+              const SizedBox(height: 200),
+              Center(child: Text(_emptyText, style: const TextStyle(color: Colors.white70))),
             ])
           : NotificationListener<ScrollNotification>(
               onNotification: (n) {
