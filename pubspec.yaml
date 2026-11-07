@@ -39,8 +39,12 @@ flutter:
 flutter_launcher_icons:
   android: true
   ios: false
-  image_path: "assets/icon/myfeed_icon.png"
-  # Android 8+ adaptive icon: background colour + your image on top
-  adaptive_icon_background: "#14181F"
-  adaptive_icon_foreground: "assets/icon/myfeed_icon_adaptive.png"
+  # Legacy launchers / full square icon
+  image_path: "assets/icon/icon_full.png"
+  # Android 8+ adaptive icon (layers are 1024x1024; symbol already inside the safe zone)
+  adaptive_icon_background: "assets/icon/icon_background.png"
+  adaptive_icon_foreground: "assets/icon/icon_foreground.png"
+  adaptive_icon_foreground_inset: 0
+  # Android 13+ themed icon
+  adaptive_icon_monochrome: "assets/icon/icon_monochrome.png"
   min_sdk_android: 24
