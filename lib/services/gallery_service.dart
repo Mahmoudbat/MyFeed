@@ -122,6 +122,19 @@ class GalleryService {
     }
   }
 
+  /// Moves assets to the system Trash (Android 11+), where they can be
+  /// restored for 30 days. Android shows its own confirmation. Returns the
+  /// ids moved, or null when the platform has no Trash.
+  Future<List<String>?> moveToTrash(List<AssetEntity> assets) async {
+    if (assets.isEmpty) return [];
+    try {
+      return await PhotoManager.editor.android.moveToTrash(assets);
+    } catch (e) {
+      debugPrint('moveToTrash unavailable: $e');
+      return null;
+    }
+  }
+
   /// Deletes originals from the device gallery. On Android 11+ the system
   /// asks the user to confirm. Returns the ids actually deleted.
   Future<List<String>> deleteOriginals(List<String> ids) async {

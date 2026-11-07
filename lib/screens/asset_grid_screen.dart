@@ -11,6 +11,7 @@ import '../widgets/media_tile.dart';
 import '../widgets/media_viewer.dart';
 import '../widgets/progress_dialog.dart';
 import '../widgets/video_view.dart';
+import 'gallery_actions.dart';
 import 'locked/vault_actions.dart';
 
 /// Paged, sortable, selectable grid of device-gallery media. Used for the
@@ -142,13 +143,38 @@ class _AssetGridScreenState extends State<AssetGridScreen> {
     }
   }
 
-  Future<void> _lockSelected() async {
+  /// The selected assets, including ones not loaded yet (after "Select all").
+  Future<List<AssetEntity>> _selectedAssets() async {
     final ids = Set.of(_selected);
     var assets = _assets.where((a) => ids.contains(a.id)).toList();
     if (assets.length < ids.length && _path != null) {
       final all = await _path!.getAssetListRange(start: 0, end: _total);
       assets = all.where((a) => ids.contains(a.id)).toList();
     }
+    return assets;
+  }
+
+  Future<void> _shareSelected() async {
+    final assets = await _selectedAssets();
+    if (!mounted) return;
+    await shareAssets(context, assets);
+  }
+
+  Future<void> _deleteSelected() async {
+    final assets = await _selectedAssets();
+    if (!mounted) return;
+    final removed = await deleteAssets(context, assets);
+    if (!mounted || removed.isEmpty) return;
+    setState(() {
+      _selected.removeAll(removed);
+      _assets = _assets.where((a) => !removed.contains(a.id)).toList();
+      _total -= removed.length;
+    });
+    _load(keepPosition: true);
+  }
+
+  Future<void> _lockSelected() async {
+    final assets = await _selectedAssets();
     if (!mounted) return;
     final result = await lockAssets(context, assets);
     if (!mounted || result == null) return;
@@ -165,6 +191,11 @@ class _AssetGridScreenState extends State<AssetGridScreen> {
         pageBuilder: (context, asset, active) => AssetPage(asset: asset, active: active),
         actionsBuilder: (context, asset, viewer) => [
           IconButton(
+            tooltip: 'Share',
+            icon: const Icon(Icons.share_outlined),
+            onPressed: () => shareAssets(context, [asset]),
+          ),
+          IconButton(
             tooltip: 'Move to locked gallery',
             icon: const Icon(Icons.lock_outline),
             onPressed: () async {
@@ -173,6 +204,19 @@ class _AssetGridScreenState extends State<AssetGridScreen> {
               showSnack(context, describeLockResult(result), error: result.failed > 0);
               if (result.removedOriginals > 0) viewer.removeCurrent();
             },
+          ),
+          IconButton(
+            tooltip: 'Delete',
+            icon: const Icon(Icons.delete_outline),
+            onPressed: () async {
+              final removed = await deleteAssets(context, [asset]);
+              if (removed.contains(asset.id)) viewer.removeCurrent();
+            },
+          ),
+          IconButton(
+            tooltip: 'Details',
+            icon: const Icon(Icons.info_outline),
+            onPressed: () => showAssetDetails(context, asset),
           ),
         ],
       ),
@@ -247,11 +291,13 @@ class _AssetGridScreenState extends State<AssetGridScreen> {
                 title: Text('${_selected.length} selected'),
                 actions: [
                   IconButton(tooltip: 'Select all', icon: const Icon(Icons.select_all), onPressed: _selectAll),
+                  IconButton(tooltip: 'Share', icon: const Icon(Icons.share_outlined), onPressed: _shareSelected),
                   IconButton(
                     tooltip: 'Move to locked gallery',
-                    icon: const Icon(Icons.lock),
+                    icon: const Icon(Icons.lock_outline),
                     onPressed: _lockSelected,
                   ),
+                  IconButton(tooltip: 'Delete', icon: const Icon(Icons.delete_outline), onPressed: _deleteSelected),
                 ],
               )
             : AppBar(
