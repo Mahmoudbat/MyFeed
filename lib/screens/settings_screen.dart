@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../services/app_settings.dart';
 import '../vault/vault_session.dart';
+import '../widgets/vault_auto_lock_setting.dart';
 import 'locked/auth_screen.dart';
 
 class SettingsScreen extends StatelessWidget {
@@ -38,6 +39,7 @@ class SettingsScreen extends StatelessWidget {
               value: settings.removeOriginalsAfterLocking,
               onChanged: settings.setRemoveOriginalsAfterLocking,
             ),
+            const VaultAutoLockSetting(),
             const Divider(),
             SwitchListTile(
               secondary: const Icon(Icons.swap_vert),
@@ -55,7 +57,7 @@ class SettingsScreen extends StatelessWidget {
               subtitle: Text(
                 'Locked files are encrypted with AES-256-GCM. The key is protected by your password '
                 '(PBKDF2, 600k iterations) and is never stored in the clear, so a forgotten password '
-                'cannot be recovered. The vault locks automatically when you leave the app, and '
+                'cannot be recovered. Auto-lock follows your setting when you leave the app, and '
                 'screenshots are blocked while it is open.',
               ),
             ),

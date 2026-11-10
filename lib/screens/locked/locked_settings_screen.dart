@@ -5,6 +5,7 @@ import '../../util/format.dart';
 import '../../vault/vault_keys.dart';
 import '../../vault/vault_session.dart';
 import '../../widgets/progress_dialog.dart';
+import '../../widgets/vault_auto_lock_setting.dart';
 import 'vault_actions.dart';
 
 VaultSession get _session => VaultSession.instance;
@@ -120,6 +121,7 @@ class _LockedSettingsScreenState extends State<LockedSettingsScreen> {
                 subtitle: const Text('Encrypted with AES-256-GCM; key protected by your password'),
               ),
               const Divider(),
+              const VaultAutoLockSetting(),
               ListTile(
                 leading: const Icon(Icons.password),
                 title: const Text('Change password'),

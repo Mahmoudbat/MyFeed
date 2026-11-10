@@ -13,7 +13,9 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../services/app_settings.dart';
 import 'media_server.dart';
+import 'vault_auto_lock.dart';
 import 'vault_keys.dart';
 import 'vault_store.dart';
 
@@ -56,6 +58,7 @@ class VaultSession extends ChangeNotifier with WidgetsBindingObserver {
   bool _lockWhenIdle = false;
   bool _clearSecureOnResume = false;
   bool _biometricEnabled = false;
+  late final _autoLock = VaultAutoLock(lock);
   bool get biometricEnabled => _biometricEnabled;
 
 
@@ -190,6 +193,7 @@ class VaultSession extends ChangeNotifier with WidgetsBindingObserver {
   Future<void> changePassword(String current, String next) => store.changePassword(current, next);
 
   Future<void> _onUnlocked() async {
+    _autoLock.cancel();
     _state = VaultState.unlocked;
     _clearSecureOnResume = false;
     await _setSecure(true);
@@ -216,6 +220,7 @@ class VaultSession extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   void lock() {
+    _autoLock.cancel();
     if (_state != VaultState.unlocked) return;
     if (_busy > 0) {
       _lockWhenIdle = true;
@@ -241,11 +246,16 @@ class VaultSession extends ChangeNotifier with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.paused || state == AppLifecycleState.detached) {
+    if (state == AppLifecycleState.detached) {
       lock();
-    } else if (state == AppLifecycleState.resumed && _clearSecureOnResume && !isUnlocked) {
-      _clearSecureOnResume = false;
-      _setSecure(false);
+    } else if (state == AppLifecycleState.paused && isUnlocked) {
+      _autoLock.start(AppSettings.instance.vaultAutoLockDelay);
+    } else if (state == AppLifecycleState.resumed) {
+      _autoLock.resume();
+      if (_clearSecureOnResume && !isUnlocked) {
+        _clearSecureOnResume = false;
+        _setSecure(false);
+      }
     }
   }
 

@@ -29,7 +29,11 @@ gallery.
   token-protected loopback (127.0.0.1) socket, so no plaintext copies are
   written to disk. This is the only reason the app requests the `INTERNET`
   permission; it makes no outside connections.
-- The vault locks automatically when the app goes to the background. While it is
+- The vault locks after a configurable background delay (15 seconds by default).
+  Choose Immediately, 5–55 seconds in five-second steps, or Off under Settings →
+  Auto-lock delay or Locked Gallery Settings. Off keeps the vault unlocked when
+  switching apps. Returning before the deadline cancels the countdown; manual
+  locking and closing the app completely still lock immediately. While it is
   open, screenshots and the recent-apps preview are blocked (`FLAG_SECURE`).
 - Repeated wrong passwords trigger an increasing lockout.
 - Optional biometric unlock keeps a copy of the data key in Android
