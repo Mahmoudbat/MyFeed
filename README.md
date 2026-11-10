@@ -56,12 +56,11 @@ flutter run
 | `flutter run` / `flutter build apk --debug` | `com.imle.myfeed.debug` ("MyFeed (debug)") | auto-generated debug key |
 | `flutter build apk --release` | `com.imle.myfeed` ("MyFeed") | your release key |
 
-Debug builds are a separate app with their own data, so they can never replace
-(or wipe) the real app and its locked gallery.
+Debug builds have their own separate ID to not replace (delete) real app data.
 
 ### Release signing
 
-Release builds need `android/key.properties` (git-ignored, never inside the APK):
+Release builds need `android/key.properties` (git-ignored):
 
 ```properties
 storeFile=/absolute/path/to/myfeed-release.jks
@@ -74,14 +73,32 @@ Without it, release builds fail on purpose rather than falling back to the debug
 key. Back up the keystore and its password: updates only install over an app
 signed with the same key, and the alternative (uninstalling) erases the vault.
 
-Update a device without losing data:
+### Installing or updating a release build
+
+Choose either method:
+
+#### Option 1: Install the APK on your phone
+
+1. Open the [latest release](https://github.com/Mahmoudbat/MyFeed/releases/latest).
+2. Download the APK to your Android device.
+3. Open the downloaded APK and follow Android's prompts to install it.
+
+#### Option 2: Build and install with ADB
+
+From the project directory, build the release APK and list connected devices:
 
 ```bash
 flutter build apk --release
-adb install -r build/app/outputs/flutter-apk/app-release.apk
+adb devices
 ```
+Copy the serial for the target device from the `adb devices` output, then run:
+
+```bash
+adb -s YOUR_DEVICE_ID install -r build/app/outputs/apk/release/app-release.apk
+```
+
+Replace YOUR_DEVICE_ID with the serial shown by adb devices. The -s option selects that device, even if it’s the only one connected. The -r option installs the APK or replaces an existing installation while keeping its data. Updating an existing app requires the same release signing key.
 
 Bump `version:` in `pubspec.yaml` (the number after `+`) for each release.
 
-Only Android is set up (`flutter create --platforms=ios .` would add iOS, which
-would also need photo-library and Face ID usage strings in `Info.plist`).
+**Note:** Android is the only supported platform so far.
