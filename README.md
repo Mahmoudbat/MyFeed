@@ -79,6 +79,8 @@ signed with the same key, and the alternative (uninstalling) erases the vault.
 
 ### Installing or updating a release build
 
+**NOTE:** Minimum supported Android version: Android 7.0 (Nougat, API 24).
+
 Choose either method:
 
 #### Option 1: Install the APK on your phone
